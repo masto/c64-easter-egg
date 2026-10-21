@@ -22,6 +22,7 @@ against.
 | `src/c64float.[ch]` | Bit-exact model of the BASIC float routines RND needs (FMULT, FADD, normalise, round, pack/unpack, QINT), one function per ROM routine |
 | `src/c64rnd.[ch]` | `RND()` itself, plus the two ways the programs scale it to an integer |
 | `src/seedsearch.c` | The reference search: `build/seedsearch [--assign] WORD [FIRST [LAST]]` |
+| `src/fast/` | The fast searches, `build/fastsearch` (CPU) and `build/gpusearch` (Metal), with the same arguments; see [Fast search](#fast-search) |
 | `test/cpu6502.c`, `test/c64machine.c` | Test oracle: a small 6502 emulator that runs the **real** BASIC/KERNAL ROMs (from VICE) |
 | `test/runbasic.c` | Runs a tokenised BASIC program on the oracle and prints its output |
 | `test/test_rnd.c` | Compares the C model with the ROM routines, seed by seed and on random operands |
@@ -33,7 +34,7 @@ against.
 ```
 make            # build
 make test       # quick checks (~30 s)
-make test-long  # millions of seeds against the ROM (~10 min)
+make test-long  # millions of seeds against the ROM, every 32-bit seed through the fast filters (~15 min)
 make test-vice  # oracle vs. VICE (~30 s)
 ```
 
@@ -84,10 +85,59 @@ $68 non-zero, and it clears it again before returning.
 * `vice_crosscheck.sh`: the egg, the seed-33721604 divergence, raw RND values,
   and a Robin search all print the same in VICE as on the oracle.
 
-## Baseline performance
+## Fast search
 
-`seedsearch BILL 1 99999999` (Robin's full range) takes **7.9 s** on one M2
-Ultra core: 26 seeds, including the egg's 125708.
+Searching for BILL on an M2 Ultra (16+8 CPU cores, 60-core GPU), all finding
+the same seeds:
+
+| | Robin's range, 1..10⁸ | every 32-bit seed |
+|---|---|---|
+| `seedsearch` (reference) | 8.1 s | ~6 min (extrapolated) |
+| `fastsearch -j 1` | 0.16 s | 4.0 s |
+| `fastsearch` (24 threads) | **0.010 s** | 0.21 s |
+| `gpusearch` (kernel / whole run) | 0.006 s / 0.03 s | **0.061 s** / 0.09 s |
+
+How:
+
+1. **RND in a few integer operations** (`rndfast.h`). FMULT's shift-and-add
+   with a truncating 40-bit window is exactly `floor(product / 2^32)`, which
+   for RND's constant is `(mant * $B5447A) >> 16`. Normalising is a shift of
+   0 or 1. The 3.9E-8 addend is a shifted constant that is usually 0. The
+   scramble is `bswap`, `clz`, a shift and a round. `INT(RND*22)` is
+   `(22 * mant) >> (0xA0 - exp)`. Even FMULT's 9-bit-shift bug has a closed
+   form. There is no fallback to the slow model.
+2. **A cheap first-letter filter.** The first RND value's top byte is the
+   product mantissa's *low* byte, so it needs only the low 32 bits of one
+   multiply. That byte bounds RND to a 1/256 interval and so bounds the
+   letter. About 95% of seeds are rejected for a fraction of the work. The
+   same filter is applied before each later letter's draw.
+3. **NEON**, filtering 16 seeds per step.
+4. **Block filtering** (`rndfast_block.h`). Reseeding byte-reverses n, so
+   n's low bits become the top bits of the seed mantissa. For a block of
+   seeds differing only in those bits, each bit length shares one constant:
+   `mant = (v << (32 - j)) + C`. The filter byte is then
+   `(c + v·m) mod 256`, and precomputed bitmasks give the passing v directly.
+   That is about one reseed per bit length for up to 256 seeds.
+5. **Threads** for the CPU, and on the **GPU** (`search.metal`) the scalar
+   filter per seed. Each SIMD group queues the seeds that pass in threadgroup
+   memory and checks them exactly 32 at a time, so lanes never wait for each
+   other. Block sharing was tried on the GPU three ways and was always
+   slower: it wants straight-line per-seed code.
+
+`test_fast` checks the integer kernel against the reference model on 80M
+draws and 20M arbitrary states, including 1.5M that hit FMULT's bug. It also
+checks that the filters (scalar, NEON, block) are sound on every one of the
+2³² seeds and on 400M later-draw states. `compare_fast.sh` checks that all
+the programs agree with `seedsearch` across words, both modes, other scales
+and the oddball seeds.
+
+### Oddities found along the way
+
+* **RND can return exactly 1.0.** Rounding can carry all the way out of the
+  mantissa. Four seeds below 2³² do this on their first draw, so
+  `INT(RND*22)` = 22 and the egg prints **V**. Seed 715174253 spells just "V".
+* Seed 33721604 spells KOEHQHDLPRSMPMCE with the egg's `INT()` but
+  LOEHQHDLPRSMPMCE with Robin's `A%=`.
 
 ## Notes for the optimised versions
 

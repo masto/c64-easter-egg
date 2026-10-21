@@ -27,6 +27,7 @@ typedef struct {
     uint32_t scale;
     int      assign;
     ffilter  filter;         /* cheap test for target[0] */
+    ffilter  filters[256];   /* ... and for each target[i] */
     blocktab blocks;         /* the same test for blocks of seeds */
     int      method;         /* 0 = block filter, 1 = NEON per-seed filter */
     uint64_t first, last;
@@ -54,9 +55,15 @@ static void add_result(job *j, uint32_t n)
 
 
 #define SCAN(NAME, TIMES)                                                        \
-    static inline int NAME##_spells_from(const uint8_t *t, uint32_t scale, fseed s) \
+    /* Does seed state s (which passed the filter for t[0]) spell t?  Later   \
+       letters are filtered cheaply before computing each draw. */            \
+    static inline int NAME##_spells_from(const job *j, fseed s)                 \
     {                                                                            \
+        const uint8_t *t = j->target;                                            \
+        const uint32_t scale = j->scale;                                         \
         for (size_t i = 0;; i++) {                                               \
+            if (i > 0 && !fast_filter_pass(&j->filters[i], s))                   \
+                return 0;                                                        \
             s = fast_rnd(s);                                                     \
             uint32_t v = TIMES(s, scale);                                        \
             if (v != t[i])                                                       \
@@ -65,16 +72,14 @@ static void add_result(job *j, uint32_t n)
                 return 1;                                                        \
         }                                                                        \
     }                                                                            \
-    static inline int NAME##_spells(const uint8_t *t, uint32_t scale, uint32_t n) \
+    static inline int NAME##_spells(const job *j, uint32_t n)                   \
     {                                                                            \
-        return NAME##_spells_from(t, scale, fast_reseed(n));                     \
+        return NAME##_spells_from(j, fast_reseed(n));                            \
     }                                                                            \
     static void NAME(job *j, uint64_t lo, uint64_t hi);                          \
     /* Whole blocks via the block filter, the rest one seed at a time. */        \
     static void NAME##_blocks(job *j, uint64_t lo, uint64_t hi)                  \
     {                                                                            \
-        const uint8_t *t = j->target;                                            \
-        const uint32_t scale = j->scale;                                         \
         uint64_t n = lo;                                                         \
         while (n < hi) {                                                         \
             unsigned bitlen = 64 - (unsigned)__builtin_clzll(n);                 \
@@ -94,7 +99,7 @@ static void add_result(job *j, uint32_t n)
             } else {                                                             \
                 fseed s0 = fast_reseed((uint32_t)n);                             \
                 if (fast_filter_pass(&j->filter, s0)                             \
-                    && NAME##_spells_from(t, scale, s0))                         \
+                    && NAME##_spells_from(j, s0))                                \
                     add_result(j, (uint32_t)n);                                  \
                 n++;                                                             \
             }                                                                    \
@@ -102,14 +107,12 @@ static void add_result(job *j, uint32_t n)
     }                                                                            \
     static void NAME(job *j, uint64_t lo, uint64_t hi)                           \
     {                                                                            \
-        const uint8_t *t = j->target;                                            \
-        const uint32_t scale = j->scale;                                         \
         const ffilter f = j->filter;                                             \
         uint64_t n = lo;                                                         \
         NEON_LOOP(NAME)                                                          \
         for (; n < hi; n++) {                                                    \
             if (fast_filter_pass(&f, fast_reseed((uint32_t)n))                   \
-                && NAME##_spells(t, scale, (uint32_t)n))                         \
+                && NAME##_spells(j, (uint32_t)n))                                \
                 add_result(j, (uint32_t)n);                                      \
         }                                                                        \
     }
@@ -123,7 +126,7 @@ static void add_result(job *j, uint32_t n)
                 while (mask) {                                                   \
                     uint32_t c = (uint32_t)n + (uint32_t)(__builtin_ctzll(mask) >> 2); \
                     mask &= ~(0xFull << (__builtin_ctzll(mask) & ~3));           \
-                    if (NAME##_spells(t, scale, c))                              \
+                    if (NAME##_spells(j, c))                                     \
                         add_result(j, c);                                        \
                 }                                                                \
             }                                                                    \
@@ -132,8 +135,8 @@ static void add_result(job *j, uint32_t n)
 #define NEON_LOOP(NAME)
 #endif
 
-#define scan_int_EMIT(N, S)    do { if (scan_int_spells_from(t, scale, (S))) add_result(j, (N)); } while (0)
-#define scan_assign_EMIT(N, S) do { if (scan_assign_spells_from(t, scale, (S))) add_result(j, (N)); } while (0)
+#define scan_int_EMIT(N, S)    do { if (scan_int_spells_from(j, (S))) add_result(j, (N)); } while (0)
+#define scan_assign_EMIT(N, S) do { if (scan_assign_spells_from(j, (S))) add_result(j, (N)); } while (0)
 SCAN(scan_int, fast_times_int)
 SCAN(scan_assign, fast_times_assign)
 
@@ -228,6 +231,8 @@ int main(int argc, char **argv)
     j.target[j.len] = 0;
     j.scale = (uint32_t)scale;
     j.filter = fast_filter_init(j.scale, j.target[0]);
+    for (size_t k = 0; k <= j.len; k++)
+        j.filters[k] = fast_filter_init(j.scale, j.target[k]);
     block_init(&j.blocks, j.filter);
     j.first = argc - i > 1 ? parse_number(argv[i + 1], 0xFFFFFFFFu, prog) : 1;
     j.last  = argc - i > 2 ? parse_number(argv[i + 2], 0xFFFFFFFFu, prog) : 99999999;

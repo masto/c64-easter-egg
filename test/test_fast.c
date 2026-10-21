@@ -146,6 +146,28 @@ int main(int argc, char **argv)
                (unsigned long long)checked, 100.0 * (double)passed / (double)checked, t / 2);
     }
 
+    /* The filter must also be sound for later draws, i.e. arbitrary states:
+       every state along 20-draw sequences from many seeds. */
+    {
+        ffilter f[23];
+        for (uint32_t w = 0; w <= 22; w++)
+            f[w] = fast_filter_init(22, w);
+        uint64_t checked = 0;
+        for (uint64_t n = 1; n <= filter_last; n += 211) {
+            fseed s = fast_reseed((uint32_t)n);
+            for (int d = 0; d < 20; d++) {
+                fseed r = fast_rnd(s);
+                uint32_t k[2] = { fast_times_int(r, 22), fast_times_assign(r, 22) };
+                for (int mode = 0; mode < 2; mode++)
+                    if (!fast_filter_pass(&f[k[mode]], s) && ++failures <= 20)
+                        fprintf(stderr, "MISMATCH filter rejects state %02X %08X (value %u)\n", s.exp, s.mant, k[mode]);
+                s = r;
+                checked++;
+            }
+        }
+        printf("filter sound on %llu states from later draws\n", (unsigned long long)checked);
+    }
+
     /* The block filter must produce exactly the seeds the scalar filter passes. */
     {
         static blocktab bt;
