@@ -1,5 +1,25 @@
 # C64 RND "easter egg" seed search
 
+**Make your own:** `build/eggmaker -o egg.prg "click subscribe"` prints the
+BASIC program (and writes it as a `.prg` to load in VICE or on a real C64):
+
+```
+CLICK            -> CLICK (148094359)
+SUBSCRIBE        -> SUBSC (105819249) RIBE (12573293)
+
+10 PRINT:A=148094359:GOSUB 20:A=105819249:GOSUB 20:A=12573293:GOSUB 20:END
+20 A=RND(-A)
+30 A=INT(RND(A)*22):IF A THEN PRINT CHR$(A+64);:GOTO30
+40 PRINT" ";:RETURN
+```
+
+That is exactly the program from the finale of Robin's video. Each word gets
+the smallest integer seed that spells it. Words with no seed are split into
+the fewest chunks that have one, longest first. All seeds 1..2³²−1 are
+searched in one pass (about 2 s) for every substring at once, with a trie.
+The letters are A–U (`--scale 27` gives A–Z), and `--max 999999999` keeps
+the literals to 9 digits.
+
 The fake easter egg from 8-Bit Show and Tell (TPUG newsletter, Fall 2015):
 
 ```
@@ -22,6 +42,7 @@ against.
 | `src/c64float.[ch]` | Bit-exact model of the BASIC float routines RND needs (FMULT, FADD, normalise, round, pack/unpack, QINT), one function per ROM routine |
 | `src/c64rnd.[ch]` | `RND()` itself, plus the two ways the programs scale it to an integer |
 | `src/seedsearch.c` | The reference search: `build/seedsearch [--assign] WORD [FIRST [LAST]]` |
+| `src/fast/eggmaker.c` | Text in, easter egg program out |
 | `src/fast/` | The fast searches, `build/fastsearch` (CPU) and `build/gpusearch` (Metal), with the same arguments; see [Fast search](#fast-search) |
 | `test/cpu6502.c`, `test/c64machine.c` | Test oracle: a small 6502 emulator that runs the **real** BASIC/KERNAL ROMs (from VICE) |
 | `test/runbasic.c` | Runs a tokenised BASIC program on the oracle and prints its output |
@@ -136,6 +157,11 @@ and the oddball seeds.
 * **RND can return exactly 1.0.** Rounding can carry all the way out of the
   mantissa. Four seeds below 2³² do this on their first draw, so
   `INT(RND*22)` = 22 and the egg prints **V**. Seed 715174253 spells just "V".
+* BASIC parses 10-digit literals exactly, so seeds up to 4294967295 work
+  (`A=4294967295:A=RND(-A)` even leaves the seed at exactly 1.0).
+* n and 2n often give the same letters, since doubling only changes the
+  exponent, which the scramble mostly discards: CLICK is 148094359 and
+  296188718.
 * Seed 33721604 spells KOEHQHDLPRSMPMCE with the egg's `INT()` but
   LOEHQHDLPRSMPMCE with Robin's `A%=`.
 

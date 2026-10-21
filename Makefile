@@ -7,11 +7,14 @@ ORACLE  := test/cpu6502.c test/c64machine.c
 
 FASTFLAGS ?= -O3 -mcpu=native -Wall -Wextra -std=gnu11
 
-all: $(BUILD)/seedsearch $(BUILD)/runbasic $(BUILD)/test_rnd $(BUILD)/fastsearch $(BUILD)/test_fast \
+all: $(BUILD)/seedsearch $(BUILD)/runbasic $(BUILD)/test_rnd $(BUILD)/fastsearch $(BUILD)/test_fast $(BUILD)/eggmaker \
      $(if $(filter Darwin,$(shell uname -s)),$(BUILD)/gpusearch)
 
 $(BUILD)/fastsearch: src/fast/fastsearch.c src/fast/*.h | $(BUILD)
 	$(CC) $(FASTFLAGS) -o $@ src/fast/fastsearch.c -lpthread
+
+$(BUILD)/eggmaker: src/fast/eggmaker.c src/fast/rndfast.h $(MODEL) src/*.h | $(BUILD)
+	$(CC) $(FASTFLAGS) -o $@ src/fast/eggmaker.c $(MODEL) -lpthread
 
 $(BUILD)/test_fast: test/test_fast.c src/fast/*.h $(MODEL) src/*.h | $(BUILD)
 	$(CC) $(FASTFLAGS) -o $@ test/test_fast.c $(MODEL)
@@ -43,6 +46,7 @@ test: all $(BUILD)/easteregg.prg
 	$(BUILD)/test_rnd 20000 10 200000
 	$(BUILD)/test_fast 100000 2000000 200000000
 	test/compare_fast.sh
+	test/test_eggmaker.sh
 	@$(BUILD)/runbasic $(BUILD)/easteregg.prg 2>/dev/null | tr -s '\n' ' ' | grep -q 'BILL GATES SUCKS' \
 	    && echo "OK   easter egg prints BILL GATES SUCKS on the ROMs"
 	@test "$$($(BUILD)/seedsearch BILL 125708 125708)" = "125708 BILL" \
