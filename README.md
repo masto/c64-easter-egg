@@ -13,14 +13,14 @@ SUBSCRIBE        -> SUBSC (105819249) RIBE (12573293)
 40 PRINT" ";:RETURN
 ```
 
-That is exactly the program from the finale of Robin's video. Each word gets
+That is exactly the program from the finale of [Robin's video](https://www.youtube.com/watch?v=g8HHpmyFfw4). Each word gets
 the smallest integer seed that spells it. Words with no seed are split into
 the fewest chunks that have one, longest first. All seeds 1..2³²−1 are
 searched in one pass (about 2 s) for every substring at once, with a trie.
 The letters are A–U (`--scale 27` gives A–Z), and `--max 999999999` keeps
 the literals to 9 digits.
 
-The fake easter egg from 8-Bit Show and Tell (TPUG newsletter, Fall 2015):
+The fake easter egg from 8-Bit Show and Tell ([TPUG newsletter, Fall 2015](https://www.tpug.ca/tpug-media/nl/91-Fall2015.pdf)):
 
 ```
 10 A=125708:GOSUB 20:A=33435700:GOSUB20:A=17059266:GOSUB 20:END
